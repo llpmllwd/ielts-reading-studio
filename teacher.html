@@ -10,7 +10,7 @@ button:disabled{opacity:.6}table{border-collapse:collapse;width:100%;font-size:1
 </style></head><body><header><strong>IELTS READING STUDIO · Teacher Dashboard</strong><a href="./index.html">Student site</a></header><main>
 <h1>Student submissions</h1><p class="muted">Teacher-only view. Student answers are stored securely in your Supabase project after setup. Scores shown are self-reported and should be verified by the teacher.</p>
 <section class="panel" id="setup"></section>
-<section class="panel hidden" id="login"><h2>Teacher sign in</h2><p>Enter your approved teacher email to receive a sign-in link.</p><form id="form"><input type="email" id="email" required placeholder="Teacher email" autocomplete="email"><button>Send sign-in link</button></form><p id="authStatus" role="status"></p></section>
+<section class="panel hidden" id="login"><h2>Teacher sign in</h2><p>Enter your approved teacher email to receive a sign-in link.</p><form id="form"><input type="email" id="email" required placeholder="Teacher email" autocomplete="email"><button>Send sign-in link</button></form><p id="authStatus" role="status"></p><p class="muted" style="font-size:13px">Open the latest sign-in link in this same browser (Chrome). If the link opens a different browser, your sign-in may not carry over. You can also enter the email code below if your email includes a 6-digit code.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Email code (if supplied)"><button id="verifyOtp" type="button">Verify code</button></div></section>
 <section class="panel hidden" id="dashboard"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button id="refresh">Refresh submissions</button><button id="csv">Export CSV</button><button id="logout">Sign out</button><select id="filter"><option value="">All exercises</option></select><span id="count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Received</th><th>Student</th><th>Exercise</th><th>Type</th><th>Score (self-reported)</th><th>Answers</th></tr></thead><tbody id="rows"></tbody></table></div></section>
 </main><script src="./submission-config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script><script>
 const $=id=>document.getElementById(id);
@@ -22,16 +22,59 @@ if(!ok||!window.supabase){$('setup').innerHTML='<p class="warn">Teacher submissi
 else{
   $('setup').classList.add('hidden');
   client=supabase.createClient(c.supabaseUrl,c.anonKey,{auth:{persistSession:true,detectSessionInUrl:true}});
+  // Handle async Magic Link redirects and page refreshes consistently.
+  client.auth.onAuthStateChange((event,session)=>{
+    if(event==='SIGNED_IN'||event==='INITIAL_SESSION'||event==='SIGNED_OUT'){
+      setTimeout(()=>init(),0);
+    }
+  });
   init();
 }
+let loadingSession=false;
 async function init(){
-  const {data:{session}}=await client.auth.getSession();
-  if(!session){$('login').classList.remove('hidden');$('dashboard').classList.add('hidden');return}
-  const {data:allowed,error}=await client.from('reading_teachers').select('user_id').eq('user_id',session.user.id).maybeSingle();
-  if(error||!allowed){$('login').classList.remove('hidden');$('authStatus').textContent='This account is signed in but is not approved as a teacher. Ask the database owner to approve your account in Supabase.';return}
-  $('login').classList.add('hidden');$('dashboard').classList.remove('hidden');await load();
+  if(loadingSession)return;
+  loadingSession=true;
+  try{
+    const {data:{session},error:sessionError}=await client.auth.getSession();
+    if(sessionError)throw sessionError;
+    if(!session){
+      $('login').classList.remove('hidden');$('dashboard').classList.add('hidden');
+      if(location.hash.includes('error=')||location.search.includes('error=')){
+        $('authStatus').textContent='Sign-in link could not be verified. Request a fresh link and open it in the same browser.';
+      }else if(!$('authStatus').textContent){
+        $('authStatus').textContent='Not signed in on this browser. Open the sign-in link from your email here.';
+      }
+      return;
+    }
+    const {data:allowed,error}=await client.from('reading_teachers').select('user_id').eq('user_id',session.user.id).maybeSingle();
+    if(error){
+      $('login').classList.remove('hidden');
+      $('authStatus').textContent='Signed in, but the teacher permission check failed: '+error.message;
+      return;
+    }
+    if(!allowed){
+      $('login').classList.remove('hidden');
+      $('authStatus').textContent='Signed in as '+(session.user.email||'another email')+', but this account is not approved for teacher access.';
+      return;
+    }
+    $('authStatus').textContent='';
+    $('login').classList.add('hidden');
+    $('dashboard').classList.remove('hidden');
+    await load();
+  }catch(e){
+    $('login').classList.remove('hidden');
+    $('authStatus').textContent='Sign-in error: '+(e.message||String(e));
+  }finally{loadingSession=false}
 }
-$('form').onsubmit=async(e)=>{e.preventDefault();$('authStatus').textContent='Sending sign-in link…';const {error}=await client.auth.signInWithOtp({email:$('email').value,options:{emailRedirectTo:location.origin+location.pathname}});$('authStatus').textContent=error?error.message:'Check your email for the sign-in link, then return here.'}
+$('form').onsubmit=async(e)=>{e.preventDefault();$('authStatus').textContent='Sending sign-in link…';const {error}=await client.auth.signInWithOtp({email:$('email').value.trim(),options:{shouldCreateUser:false,emailRedirectTo:location.origin+location.pathname}});$('authStatus').textContent=error?'Could not send link: '+error.message:'Check your email. Open the newest sign-in link in this browser (Chrome), not another browser.'};
+$('verifyOtp').onclick=async()=>{
+  const email=$('email').value.trim(),token=$('otp').value.trim();
+  if(!email||!token){$('authStatus').textContent='Enter your email and the code from your email.';return}
+  $('authStatus').textContent='Verifying code…';
+  const {error}=await client.auth.verifyOtp({email,token,type:'email'});
+  $('authStatus').textContent=error?'Could not verify code: '+error.message:'Signed in. Opening dashboard…';
+  if(!error)await init();
+};
 async function load(){
   const {data,error}=await client.from('reading_submissions').select('id,created_at,student_name,exercise_id,exercise_title,question_type,answers,question_count,self_reported_score').order('created_at',{ascending:false}).limit(1000);
   if(error){$('count').textContent='Cannot load: '+error.message;return}
