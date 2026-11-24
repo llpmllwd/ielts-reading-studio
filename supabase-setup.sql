@@ -8,7 +8,7 @@ create table if not exists public.reading_teachers (
   user_id uuid primary key references auth.users(id) on delete cascade
 );
 alter table public.reading_teachers enable row level security;
-revoke all on public.reading_teachers from anon;
+revoke all on public.reading_teachers from anon, authenticated;
 grant select on public.reading_teachers to authenticated;
 drop policy if exists "teacher sees own approval" on public.reading_teachers;
 create policy "teacher sees own approval" on public.reading_teachers
