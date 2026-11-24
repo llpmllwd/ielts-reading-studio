@@ -1,0 +1,55 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IELTS Reading | Teacher Dashboard</title><style>
+body{font-family:system-ui,-apple-system,Arial,sans-serif;margin:0;background:#f4f7fb;color:#21354e}
+header{padding:19px 28px;background:white;border-bottom:1px solid #dfe5ed;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+main{max-width:1120px;margin:32px auto;padding:0 18px}
+.panel{background:white;padding:22px;margin:17px 0;border-radius:13px;border:1px solid #d7e0ec}
+button,input,select{font:inherit;padding:10px 13px;border:1px solid #becddd;border-radius:8px}
+button{background:#1557a8;color:white;cursor:pointer;border:0}
+button:disabled{opacity:.6}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:12px;text-align:left;border-bottom:1px solid #e5ebf3}th{background:#eef3fa}
+.table-wrap{overflow-x:auto}.muted{color:#687b92}.hidden{display:none}.warn{color:#a34e19}details{padding:12px;border-top:1px solid #e5ebf3}pre{white-space:pre-wrap;word-break:break-word}
+</style></head><body><header><strong>IELTS READING STUDIO · Teacher Dashboard</strong><a href="./index.html">Student site</a></header><main>
+<h1>Student submissions</h1><p class="muted">Teacher-only view. Student answers are stored securely in your Supabase project after setup. Scores shown are self-reported and should be verified by the teacher.</p>
+<section class="panel" id="setup"></section>
+<section class="panel hidden" id="login"><h2>Teacher sign in</h2><p>Enter your approved teacher email to receive a sign-in link.</p><form id="form"><input type="email" id="email" required placeholder="Teacher email" autocomplete="email"><button>Send sign-in link</button></form><p id="authStatus" role="status"></p></section>
+<section class="panel hidden" id="dashboard"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button id="refresh">Refresh submissions</button><button id="csv">Export CSV</button><button id="logout">Sign out</button><select id="filter"><option value="">All exercises</option></select><span id="count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Received</th><th>Student</th><th>Exercise</th><th>Type</th><th>Score (self-reported)</th><th>Answers</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+</main><script src="./submission-config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script><script>
+const $=id=>document.getElementById(id);
+const c=window.IELTS_SUBMISSIONS||{};
+const ok=/^https:\/\/[-\w]+\.supabase\.co\/?$/.test(c.supabaseUrl||'')&&c.anonKey&&!c.anonKey.startsWith('YOUR_');
+let client=null, records=[];
+const esc=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[ch]));
+if(!ok||!window.supabase){$('setup').innerHTML='<p class="warn">Teacher submission database is not configured yet. Follow the setup instructions in the repository README. No student responses have been sent from this website.</p>'}
+else{
+  $('setup').classList.add('hidden');
+  client=supabase.createClient(c.supabaseUrl,c.anonKey,{auth:{persistSession:true,detectSessionInUrl:true}});
+  init();
+}
+async function init(){
+  const {data:{session}}=await client.auth.getSession();
+  if(!session){$('login').classList.remove('hidden');$('dashboard').classList.add('hidden');return}
+  const {data:allowed,error}=await client.from('reading_teachers').select('user_id').eq('user_id',session.user.id).maybeSingle();
+  if(error||!allowed){$('login').classList.remove('hidden');$('authStatus').textContent='This account is signed in but is not approved as a teacher. Ask the database owner to approve your account in Supabase.';return}
+  $('login').classList.add('hidden');$('dashboard').classList.remove('hidden');await load();
+}
+$('form').onsubmit=async(e)=>{e.preventDefault();$('authStatus').textContent='Sending sign-in link…';const {error}=await client.auth.signInWithOtp({email:$('email').value,options:{emailRedirectTo:location.origin+location.pathname}});$('authStatus').textContent=error?error.message:'Check your email for the sign-in link, then return here.'}
+async function load(){
+  const {data,error}=await client.from('reading_submissions').select('id,created_at,student_name,exercise_id,exercise_title,question_type,answers,question_count,self_reported_score').order('created_at',{ascending:false}).limit(1000);
+  if(error){$('count').textContent='Cannot load: '+error.message;return}
+  records=data||[];
+  const current=$('filter').value;
+  const types=[...new Set(records.map(r=>r.exercise_id))];
+  $('filter').innerHTML='<option value="">All exercises</option>'+types.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
+  $('filter').value=types.includes(current)?current:'';
+  display();
+}
+function visible(){return records.filter(r=>!$('filter').value||r.exercise_id===$('filter').value)}
+function display(){
+  const arr=visible();$('count').textContent=arr.length+' submissions';
+  $('rows').innerHTML=arr.map(r=>'<tr><td>'+new Date(r.created_at).toLocaleString()+'</td><td>'+esc(r.student_name)+'</td><td>'+esc(r.exercise_title)+'</td><td>'+esc(r.question_type)+'</td><td>'+(r.self_reported_score??'—')+'/'+r.question_count+'</td><td><details><summary>View responses</summary><pre>'+esc(Object.entries(r.answers||{}).sort((a,b)=>Number(a[0])-Number(b[0])).map(([q,a])=>'Q'+q+': '+a).join('\n'))+'</pre></details></td></tr>').join('')||'<tr><td colspan="6">No submissions received yet.</td></tr>'
+}
+function exportCSV(){
+  const rows=[['Received','Student','Exercise','Type','Question','Student answer','Self-reported score'],...visible().flatMap(r=>Object.entries(r.answers||{}).map(([n,answer])=>[r.created_at,r.student_name,r.exercise_title,r.question_type,n,answer,r.self_reported_score]))];
+  const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='ielts-teacher-submissions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+$('refresh').onclick=load;$('filter').onchange=display;$('csv').onclick=exportCSV;$('logout').onclick=async()=>{await client.auth.signOut();location.reload()};
+</script></body></html>
