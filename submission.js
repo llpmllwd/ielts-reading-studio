@@ -33,8 +33,8 @@
     if (!payload.student_name || !payload.student_name.trim()) {
       alert("Please enter your name before submitting."); return;
     }
-    const attemptKey = payload.exercise_id + ":" + payload.student_name.toLowerCase();
-    if (state.has(attemptKey)) return;
+    const attemptKey = payload.exercise_id + ":" + payload.student_name.toLowerCase() + ":" + (payload.attempt_number || 1);
+    if (state.has(attemptKey) || localStorage.getItem("sent:"+attemptKey)) { status(b, "This attempt has already been sent. Choose New attempt to submit another round."); return; }
     if (!confirm("Send your completed answers to your teacher?")) return;
     b.disabled = true; b.textContent = "Sending…";
     try {
@@ -105,7 +105,8 @@
       send({
         student_name: student,
         exercise_id: "mock-1",
-        exercise_title: "IELTS Academic Reading Full Mock Exam 1",
+        exercise_title: "IELTS Academic Reading Full Mock Exam 1 — Attempt " + (Math.max(1,Number(localStorage.getItem("ielts-original-mock-attempt-"+student.trim().toLowerCase())||"1")||1)),
+        attempt_number: Math.max(1,Number(localStorage.getItem("ielts-original-mock-attempt-"+student.trim().toLowerCase())||"1")||1),
         question_type: "Full Mock Exam",
         answers: Object.fromEntries(Array.from({length:count},(_,i)=>[String(i+1), answers[i+1]||""])),
         question_count: count,
