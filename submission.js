@@ -4,6 +4,20 @@
   const ready = /^https:\/\/[-\w]+\.supabase\.co\/?$/.test(cfg.supabaseUrl || "") &&
     cfg.anonKey && !cfg.anonKey.startsWith("YOUR_");
   const state = new Set();
+  function syncPracticeButton(){
+    const b=document.getElementById("teacherSubmit");
+    if(!b||typeof current==="undefined"||current<0)return;
+    const attempt=typeof practiceAttempt==="number"?practiceAttempt:1;
+    const s=typeof sets!=="undefined"?sets[current]:null;
+    if(!s)return;
+    const k="practice-"+(current+1)+":"+String(student||"").toLowerCase()+":"+attempt;
+    const sent=state.has(k)||Boolean(localStorage.getItem("sent:"+k));
+    b.disabled=!ready||sent;
+    b.textContent=sent?"✓ Attempt "+attempt+" sent":ready?"Submit Attempt "+attempt+" to Teacher":"Submit to Teacher (setup required)";
+    const msg=document.getElementById("teacherSubmissionStatus");
+    if(msg)msg.textContent=sent?"This attempt has been submitted. Select New attempt to submit another round.":"";
+  }
+  window.IELTS_READING_SUBMISSION_UI={refreshPractice:syncPracticeButton};
 
   function button() {
     const b = document.createElement("button");
@@ -62,7 +76,7 @@
       }
       state.add(attemptKey);
       localStorage.setItem("sent:" + attemptKey, new Date().toISOString());
-      b.textContent = "✓ Sent to Teacher"; status(b, "Submission received by the online database. You may close this page.");
+      b.textContent = "✓ Sent to Teacher"; status(b, "Submission received by the online database. You may close this page.");if(payload.exercise_id.startsWith("practice-"))syncPracticeButton();
     } catch (e) {
       b.disabled = false; b.textContent = "Retry Submit to Teacher";
       status(b, "Not sent. " + e.message + " You may download your CSV as a backup.");
@@ -72,6 +86,11 @@
     const bar = document.querySelector("#study .bar .row:last-child");
     if (!bar || document.getElementById("teacherSubmit")) return;
     const b = button(); bar.appendChild(b);
+    // Re-evaluate sent state whenever students switch passages.
+    const obs=new MutationObserver(()=>syncPracticeButton());
+    const title=document.getElementById("title");
+    if(title)obs.observe(title,{childList:true});
+    syncPracticeButton();
     b.onclick = () => {
       if (typeof current === "undefined" || current < 0 || typeof sets === "undefined") return;
       const s = sets[current];
@@ -82,7 +101,8 @@
       send({
         student_name: student,
         exercise_id: "practice-" + (current + 1),
-        exercise_title: s.title,
+        exercise_title: s.title + " — Attempt " + (typeof practiceAttempt === "number" ? practiceAttempt : 1),
+        attempt_number: typeof practiceAttempt === "number" ? practiceAttempt : 1,
         question_type: s.type,
         answers: Object.fromEntries(Array.from({length:count},(_,i)=>[String(i+1),responses[i]||""])),
         question_count: count,
