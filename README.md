@@ -3,7 +3,7 @@
 Student practice website: https://llpmllwd.github.io/ielts-reading-studio/
 
 - `index.html`: Full IELTS Academic Reading mock exam (40 questions, no timer).
-- `reading-tests-16-17.html`: Two full untimed IELTS-style reading papers sourced from the teacher-uploaded Reading Test 16 and Test 17 PDFs (3 long passages and 40 questions each). Students can save responses, self-check, export CSV, and submit via the existing Supabase integration.
+- `reading-tests-16-17.html`: Three full untimed IELTS-style reading papers sourced from the teacher-uploaded Reading Tests 16, 17 and 21 PDFs (3 passages and 40 questions each). Students can save responses, self-check, export CSV, and submit via the existing Supabase integration.
 - `practice.html`: 6 types of reading practice, 6 passages, 48 questions, no timer.
 - `teacher.html`: Teacher Dashboard (secure login once Supabase is set up).
 - `submission.js`: Student “Submit to Teacher” feature (only active once database is connected).
