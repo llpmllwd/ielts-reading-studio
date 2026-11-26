@@ -11,7 +11,7 @@ button:disabled{opacity:.6}table{border-collapse:collapse;width:100%;font-size:1
 <h1>Student submissions</h1><p class="muted">Teacher-only view. Student answers are stored securely in your Supabase project after setup. Scores shown are self-reported and should be verified by the teacher.</p>
 <section class="panel" id="setup"></section>
 <section class="panel hidden" id="login"><h2>Teacher sign in</h2><p>Enter your approved teacher email to receive a sign-in link.</p><form id="form"><input type="email" id="email" required placeholder="Teacher email" autocomplete="email"><button>Send sign-in link</button></form><p id="authStatus" role="status"></p><p class="muted" style="font-size:13px">Open the latest sign-in link in this same browser (Chrome). If the link opens a different browser, your sign-in may not carry over. You can also enter the email code below if your email includes a 6-digit code.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Email code (if supplied)"><button id="verifyOtp" type="button">Verify code</button></div></section>
-<section class="panel hidden" id="dashboard"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button id="refresh">Refresh submissions</button><button id="csv">Export CSV</button><button id="logout">Sign out</button><select id="filter"><option value="">All exercises</option></select><span id="count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Received</th><th>Student</th><th>Exercise</th><th>Type</th><th>Score (self-reported)</th><th>Answers</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<section class="panel hidden" id="dashboard"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button id="refresh">Refresh submissions</button><button id="csv">Export CSV</button><button id="logout">Sign out</button><select id="filter"><option value="">All exercises</option></select><input id="studentFilter" type="search" placeholder="Search student name" aria-label="Search student name" style="max-width:230px"><span id="count" class="muted"></span><span id="syncStatus" class="muted" role="status"></span></div><div class="table-wrap"><table><thead><tr><th>Received</th><th>Student</th><th>Exercise</th><th>Type</th><th>Score (self-reported)</th><th>Answers</th></tr></thead><tbody id="rows"></tbody></table></div></section>
 </main><script src="./submission-config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script><script>
 const $=id=>document.getElementById(id);
 const c=window.IELTS_SUBMISSIONS||{};
@@ -75,24 +75,47 @@ $('verifyOtp').onclick=async()=>{
   $('authStatus').textContent=error?'Could not verify code: '+error.message:'Signed in. Opening dashboard…';
   if(!error)await init();
 };
+let loadingData=false;
 async function load(){
-  const {data,error}=await client.from('reading_submissions').select('id,created_at,student_name,exercise_id,exercise_title,question_type,answers,question_count,self_reported_score').order('created_at',{ascending:false}).limit(1000);
-  if(error){$('count').textContent='Cannot load: '+error.message;return}
-  records=data||[];
-  const current=$('filter').value;
-  const types=[...new Set(records.map(r=>r.exercise_id))];
-  $('filter').innerHTML='<option value="">All exercises</option>'+types.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
-  $('filter').value=types.includes(current)?current:'';
-  display();
+  if(!client||loadingData)return;
+  loadingData=true;
+  $('syncStatus').textContent='Updating…';
+  try{
+    const fetched=[];
+    const batchSize=500;
+    let startAt=0;
+    while(true){
+      const {data,error}=await client.from('reading_submissions')
+       .select('id,created_at,student_name,exercise_id,exercise_title,question_type,answers,question_count,self_reported_score')
+       .order('created_at',{ascending:false}).range(startAt,startAt+batchSize-1);
+      if(error)throw error;
+      const part=data||[];
+      fetched.push(...part);
+      if(part.length<batchSize)break;
+      startAt+=batchSize;
+      if(startAt>=10000){$('syncStatus').textContent='Showing the most recent 10,000 submissions';break;}
+    }
+    records=fetched;
+    const selected=$('filter').value;
+    const types=[...new Set(records.map(r=>r.exercise_id))];
+    $('filter').innerHTML='<option value="">All exercises</option>'+types.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
+    $('filter').value=types.includes(selected)?selected:'';
+    display();
+    if(startAt<10000)$('syncStatus').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(e){
+    $('syncStatus').textContent='Could not refresh: '+(e.message||String(e));
+  }finally{loadingData=false}
 }
-function visible(){return records.filter(r=>!$('filter').value||r.exercise_id===$('filter').value)}
+function visible(){const needle=$('studentFilter').value.trim().toLowerCase();return records.filter(r=>(!$('filter').value||r.exercise_id===$('filter').value)&&(!needle||r.student_name.toLowerCase().includes(needle)))}
 function display(){
-  const arr=visible();$('count').textContent=arr.length+' submissions';
-  $('rows').innerHTML=arr.map(r=>'<tr><td>'+new Date(r.created_at).toLocaleString()+'</td><td>'+esc(r.student_name)+'</td><td>'+esc(r.exercise_title)+'</td><td>'+esc(r.question_type)+'</td><td>'+(r.self_reported_score??'—')+'/'+r.question_count+'</td><td><details><summary>View responses</summary><pre>'+esc(Object.entries(r.answers||{}).sort((a,b)=>Number(a[0])-Number(b[0])).map(([q,a])=>'Q'+q+': '+a).join('\n'))+'</pre></details></td></tr>').join('')||'<tr><td colspan="6">No submissions received yet.</td></tr>'
+  const arr=visible();
+  $('count').textContent=arr.length+' shown / '+records.length+' received';
+  $('rows').innerHTML=arr.map(r=>'<tr><td>'+new Date(r.created_at).toLocaleString()+'</td><td>'+esc(r.student_name)+'</td><td>'+esc(r.exercise_title)+'</td><td>'+esc(r.question_type)+'</td><td>'+(r.self_reported_score??'—')+'/'+r.question_count+'</td><td><details><summary>View responses</summary><pre>'+esc(Object.entries(r.answers||{}).sort((a,b)=>Number(a[0])-Number(b[0])).map(([q,a])=>'Q'+q+': '+a).join('\\n'))+'</pre></details></td></tr>').join('')||'<tr><td colspan="6">No submissions match this filter, or no submissions have been received.</td></tr>'
 }
 function exportCSV(){
   const rows=[['Received','Student','Exercise','Type','Question','Student answer','Self-reported score'],...visible().flatMap(r=>Object.entries(r.answers||{}).map(([n,answer])=>[r.created_at,r.student_name,r.exercise_title,r.question_type,n,answer,r.self_reported_score]))];
   const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='ielts-teacher-submissions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
-$('refresh').onclick=load;$('filter').onchange=display;$('csv').onclick=exportCSV;$('logout').onclick=async()=>{await client.auth.signOut();location.reload()};
+$('refresh').onclick=load;$('filter').onchange=display;$('studentFilter').oninput=display;$('csv').onclick=exportCSV;$('logout').onclick=async()=>{await client.auth.signOut();location.reload()};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('dashboard').classList.contains('hidden'))load()});
 </script></body></html>
